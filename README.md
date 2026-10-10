@@ -1,6 +1,6 @@
 # Price Lab
 
-- Price Lab is a pricing-experiment simulator: AI shopper personas buy through PayPal's sandbox, andBayesian analysis tests small sellers which price will work best.
+- Price Lab is a pricing-experiment simulator: AI shopper personas buy through PayPal's sandbox, and Bayesian analysis tells small sellers which price will work best.
 
 Work in Progress
 
