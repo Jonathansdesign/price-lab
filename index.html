@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Price Lab test</title>
+  <script src="https://www.paypal.com/sdk/js?client-id=BAAXUtrUiQt2xOSsWfXbcUJ6SjfRVCN_NNO9IZGv9ht7sufjIwBEZBzV11k4fNitqnFyFfqZLS67mJdTBI&components=hosted-buttons&enable-funding=venmo&currency=USD"></script>
+</head>
+<body>
+  <h1>Almonds</h1>
+
+  <div id="paypal-container-MC367S5W5ZN7U"></div>
+  <script>
+    paypal
+      .HostedButtons({
+        hostedButtonId: "MC367S5W5ZN7U",
+      })
+      .render("#paypal-container-MC367S5W5ZN7U");
+  </script>
+</body>
+</html>
