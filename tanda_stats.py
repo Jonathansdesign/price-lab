@@ -1,8 +1,14 @@
+"""Tanda statistics: estimate each member's reliability from payment history.
+
+Uses only: Bernoulli/binomial trials, Bayes' theorem, the law of total
+probability, and a CDF. Everything is plain Python (no installs).
+"""
 import random
 from math import comb
 
 # Candidate values for a member's hidden on-time probability: 0.05, 0.10, ... 0.95
 P_GRID = [k / 20 for k in range(1, 20)]
+UNIFORM_PRIOR = [1 / len(P_GRID)] * len(P_GRID)
 
 
 def simulate_history(true_p, n_months, rng):
@@ -12,8 +18,11 @@ def simulate_history(true_p, n_months, rng):
 
 def update(prior, history):
     """Bayes' theorem on the grid.
+
     Likelihood of k on-time payments out of n is the binomial PMF.
-    The sum of prior * likelihood over the grid is P(data), by the law of total probability."""
+    The sum of prior * likelihood over the grid is P(data), by the
+    law of total probability.
+    """
     n = len(history)
     k = sum(history)
     unnormalized = [
@@ -45,17 +54,34 @@ def credible_interval(posterior, level=0.90):
     return lo, (hi if hi is not None else P_GRID[-1])
 
 
+def estimate_member(history, prior=None, level=0.90):
+    """One call that gives everything the app (and later the AI agent) needs.
+
+    Works on a payment history alone: no true_p required. This is the function
+    the rest of Tanda should call for real members.
+    """
+    posterior = update(prior or UNIFORM_PRIOR, history)
+    lo, hi = credible_interval(posterior, level)
+    return {
+        "n_months": len(history),
+        "on_time": sum(history),
+        "predicted_on_time": predictive_on_time(posterior),
+        "interval": (lo, hi),
+        "level": level,
+    }
+
+
 if __name__ == "__main__":
+    # TEST MODE: true_p exists only so we can check the model against the truth.
+    # Real members never have a known true_p.
     rng = random.Random(42)
-    members = {"Ana": 0.95, "Ben": 0.90, "Carla": 0.80,
-               "Dev": 0.70, "Elena": 0.60, "Femi": 0.45}
+    test_members = {"Ana": 0.95, "Ben": 0.90, "Carla": 0.80,
+                    "Dev": 0.70, "Elena": 0.60, "Femi": 0.45}
 
-    uniform_prior = [1 / len(P_GRID)] * len(P_GRID)
-
-    for name, true_p in members.items():
+    for name, true_p in test_members.items():
         history = simulate_history(true_p, 8, rng)
-        posterior = update(uniform_prior, history)
-        pred = predictive_on_time(posterior)
-        lo, hi = credible_interval(posterior)
+        est = estimate_member(history)
+        lo, hi = est["interval"]
         print(f"{name:6} true={true_p:.2f}  history={history}  "
-              f"predicted on-time={pred:.2f}  90% interval=({lo:.2f}, {hi:.2f})")
+              f"predicted on-time={est['predicted_on_time']:.2f}  "
+              f"90% interval=({lo:.2f}, {hi:.2f})")
