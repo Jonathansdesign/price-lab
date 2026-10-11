@@ -1,6 +1,6 @@
-# Price Lab
+# Tanda
 
-- Price Lab is a pricing-experiment simulator: AI shopper personas buy through PayPal's sandbox, and Bayesian analysis tells small sellers which price will work best.
+- Saving circles run on trust and spreadsheets, so Tanda estimates each member's reliability, recommends the payout order with the least expected loss, and runs the contributions and payouts through PayPal's sandbox.
 
 Work in Progress
 
