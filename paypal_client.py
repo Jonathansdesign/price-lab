@@ -1,9 +1,8 @@
 """Small PayPal sandbox client used by Tanda.
 
-Every PayPal call in the project goes through this class.
-Rest of the code never repeats token or error handling.
+Every PayPal call in the project goes through this one class, so the
+rest of the code never repeats token or error handling.
 """
-
 import os
 import time
 import uuid
@@ -13,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE = "https://api-m.sandbox.paypal.com"  # sandbox only: no actual money
+BASE = "https://api-m.sandbox.paypal.com"  # sandbox only: no real money
 
 
 class PayPalError(Exception):
@@ -71,23 +70,76 @@ class PayPalClient:
         return resp.json()
 
     # ---- money in: a member's contribution ----
-    def create_order(self, amount, currency="USD", reference=None):
-        """Create a sandbox order (a contribution). A buyer must still approve it."""
+    def create_order(self, amount, currency="USD", reference=None,
+                     save_payment_method=False,
+                     return_url="https://example.com/return",
+                     cancel_url="https://example.com/cancel"):
+        """Create a sandbox order (a contribution). A buyer must still approve it.
+
+        save_payment_method=True asks PayPal to store the buyer's PayPal wallet in
+        the Vault after a successful capture, so later rounds can be charged
+        without the buyer clicking approve again.
+        """
+        unit = {"amount": {"currency_code": currency, "value": f"{amount:.2f}"}}
+        if reference:
+            unit["reference_id"] = reference
+        body = {"intent": "CAPTURE", "purchase_units": [unit]}
+        if save_payment_method:
+            body["payment_source"] = {
+                "paypal": {
+                    "attributes": {
+                        "vault": {
+                            "store_in_vault": "ON_SUCCESS",
+                            "usage_type": "MERCHANT",
+                            "customer_type": "CONSUMER",
+                        }
+                    },
+                    "experience_context": {"return_url": return_url, "cancel_url": cancel_url},
+                }
+            }
+        order = self._request(
+            "POST",
+            "/v2/checkout/orders",
+            json=body,
+            extra_headers={"PayPal-Request-Id": str(uuid.uuid4())},
+        )
+        # A normal order labels its approval link "approve"; a vault order uses "payer-action".
+        approve = next(
+            (l["href"] for l in order.get("links", []) if l["rel"] in ("approve", "payer-action")),
+            None,
+        )
+        return {"id": order["id"], "status": order["status"], "approve_url": approve}
+
+    def capture_order(self, order_id):
+        """Capture an order after the buyer has approved it."""
+        return self._request("POST", f"/v2/checkout/orders/{order_id}/capture")
+
+    def charge_vaulted(self, vault_id, amount, currency="USD", reference=None):
+        """Charge a saved PayPal wallet with no buyer present (the member approved once).
+
+        Returns {"id", "status", "raw"}. If PayPal refuses the charge this raises
+        PayPalError, which Tanda can record as a missed payment (a 0 in the history).
+        """
         unit = {"amount": {"currency_code": currency, "value": f"{amount:.2f}"}}
         if reference:
             unit["reference_id"] = reference
         order = self._request(
             "POST",
             "/v2/checkout/orders",
-            json={"intent": "CAPTURE", "purchase_units": [unit]},
+            json={
+                "intent": "CAPTURE",
+                "purchase_units": [unit],
+                "payment_source": {"paypal": {"vault_id": vault_id}},
+            },
             extra_headers={"PayPal-Request-Id": str(uuid.uuid4())},
         )
-        approve = next((l["href"] for l in order.get("links", []) if l["rel"] == "approve"), None)
-        return {"id": order["id"], "status": order["status"], "approve_url": approve}
+        # Some responses come back already COMPLETED; otherwise capture it.
+        if order.get("status") != "COMPLETED":
+            order = self.capture_order(order["id"])
+        return {"id": order.get("id"), "status": order.get("status"), "raw": order}
 
-    def capture_order(self, order_id):
-        """Capture an order after the buyer has approved it."""
-        return self._request("POST", f"/v2/checkout/orders/{order_id}/capture")
+    def get_order(self, order_id):
+        return self._request("GET", f"/v2/checkout/orders/{order_id}")
 
     # ---- money out: the round's pot ----
     def send_payout(self, receiver_email, amount, note, currency="USD", sender_batch_id=None):
@@ -117,3 +169,20 @@ class PayPalClient:
         """Check a payout's status (it can start as PENDING)."""
         data = self._request("GET", f"/v1/payments/payouts/{payout_batch_id}")
         return {"batch_status": data["batch_header"]["batch_status"], "items": data.get("items", [])}
+
+
+def extract_vault(order_json):
+    """Pull the saved-payment-method info out of a captured order's response.
+
+    PayPal's docs show the key as both 'attributes' and 'attribute', so check both.
+    Returns {"vault_id", "status", "customer_id"}; vault_id can be None while the
+    status is APPROVED (PayPal finishes saving it a moment later).
+    """
+    paypal = order_json.get("payment_source", {}).get("paypal", {})
+    attrs = paypal.get("attributes") or paypal.get("attribute") or {}
+    vault = attrs.get("vault", {})
+    return {
+        "vault_id": vault.get("id"),
+        "status": vault.get("status"),
+        "customer_id": vault.get("customer", {}).get("id"),
+    }
