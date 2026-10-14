@@ -44,12 +44,24 @@ def convolve(a, b):
     return out
 
 
-def total_missed_pmf(order, pmf_cache):
+def payments_still_owed(slot, n, rounds_done):
+    """How many future payments could this member still miss after receiving the pot?
+
+    * Not paid yet (slot >= rounds_done): they will be paid in round `slot`
+      and then owe the rounds after it, which is n - 1 - slot payments.
+    * Already paid (slot < rounds_done): they owe every round that hasn't
+      happened yet, which is n - rounds_done payments.
+    With rounds_done = 0 (a brand-new circle) this is the original n - 1 - slot.
+    """
+    return n - 1 - slot if slot >= rounds_done else n - rounds_done
+
+
+def total_missed_pmf(order, pmf_cache, rounds_done=0):
     """PMF of the total number of missed payments for a given payout order."""
     n = len(order)
     total = [1.0]
     for slot, name in enumerate(order):          # slot 0 = paid first
-        total = convolve(total, pmf_cache[name][n - 1 - slot])
+        total = convolve(total, pmf_cache[name][payments_still_owed(slot, n, rounds_done)])
     return total
 
 
@@ -62,22 +74,28 @@ def tail_prob(pmf, k):
     return sum(pr for m, pr in enumerate(pmf) if m >= k)
 
 
-def analyze_orders(histories, contribution=100, bad_threshold=3):
+def analyze_orders(histories, contribution=100, bad_threshold=3,
+                   rounds_done=0, fixed_prefix=()):
     """Score every possible payout order.
 
     histories: {name: [1, 0, 1, ...]} payment history per member (no true_p needed).
     bad_threshold: 'bad outcome' means at least this many missed payments.
+    rounds_done / fixed_prefix: for a circle already under way. fixed_prefix is the
+    list of members already paid, in order; only the remaining members are shuffled.
     Returns a dict with the best order, the worst order, and the random baseline.
     """
     names = list(histories)
     n = len(names)
+    fixed_prefix = list(fixed_prefix)
+    remaining = [nm for nm in names if nm not in fixed_prefix]
     posteriors = {nm: update(UNIFORM_PRIOR, h) for nm, h in histories.items()}
     # Cache each member's PMF for each possible number of remaining payments.
-    pmf_cache = {nm: {r: missed_pmf(posteriors[nm], r) for r in range(n)} for nm in names}
+    pmf_cache = {nm: {r: missed_pmf(posteriors[nm], r) for r in range(n + 1)} for nm in names}
 
     scored = []
-    for order in permutations(names):             # all N! orders (720 for N = 6)
-        pmf = total_missed_pmf(order, pmf_cache)
+    for tail in permutations(remaining):          # all orderings of who is still unpaid
+        order = tuple(fixed_prefix) + tail
+        pmf = total_missed_pmf(order, pmf_cache, rounds_done)
         scored.append({
             "order": list(order),
             "expected_loss": contribution * expected_value(pmf),

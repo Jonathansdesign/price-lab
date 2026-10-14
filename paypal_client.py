@@ -3,6 +3,7 @@
 Every PayPal call in the project goes through this one class, so the
 rest of the code never repeats token or error handling.
 """
+import json
 import os
 import time
 import uuid
@@ -114,8 +115,11 @@ class PayPalClient:
         """Capture an order after the buyer has approved it."""
         return self._request("POST", f"/v2/checkout/orders/{order_id}/capture")
 
-    def charge_vaulted(self, vault_id, amount, currency="USD", reference=None):
+    def charge_vaulted(self, vault_id, amount, currency="USD", reference=None, mock_error=None):
         """Charge a saved PayPal wallet with no buyer present (the member approved once).
+
+        mock_error: sandbox-only test hook. Pass e.g. "INSTRUMENT_DECLINED" to ask
+        PayPal to simulate that failure (documented for the sandbox; untested here).
 
         Returns {"id", "status", "raw"}. If PayPal refuses the charge this raises
         PayPalError, which Tanda can record as a missed payment (a 0 in the history).
@@ -123,6 +127,9 @@ class PayPalClient:
         unit = {"amount": {"currency_code": currency, "value": f"{amount:.2f}"}}
         if reference:
             unit["reference_id"] = reference
+        headers = {"PayPal-Request-Id": str(uuid.uuid4())}
+        if mock_error:
+            headers["PayPal-Mock-Response"] = json.dumps({"mock_application_codes": mock_error})
         order = self._request(
             "POST",
             "/v2/checkout/orders",
@@ -131,7 +138,7 @@ class PayPalClient:
                 "purchase_units": [unit],
                 "payment_source": {"paypal": {"vault_id": vault_id}},
             },
-            extra_headers={"PayPal-Request-Id": str(uuid.uuid4())},
+            extra_headers=headers,
         )
         # Some responses come back already COMPLETED; otherwise capture it.
         if order.get("status") != "COMPLETED":
